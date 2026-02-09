@@ -27,6 +27,12 @@ extract_from_table <- function(table_name, table_path, id_list, output_path, sel
   # Connect to DuckDB
   message("Connecting to DuckDB...")
   conn <- duckdb::dbConnect(duckdb::duckdb(), bigint = "integer64")
+  on.exit(
+    {
+      duckdb::dbDisconnect(conn, shutdown = TRUE)
+    },
+    add = TRUE
+  )
 
   # Get the schema for the specified table
   message("Retrieving table schema...")
@@ -60,7 +66,7 @@ extract_from_table <- function(table_name, table_path, id_list, output_path, sel
   DBI::dbExecute(conn, query)
 
   # Disconnect from the database
-  duckdb::dbDisconnect(conn, shutdown = TRUE)
+  # duckdb::dbDisconnect(conn, shutdown = TRUE)
 
   # Calculate and display execution time
   end_time <- Sys.time()
@@ -122,6 +128,12 @@ process_id_list <- function(id_list) {
   }
   # Convert id_list to data.table
   id_dt <- data.table::data.table(pat_id = id_list)
+  # Unique IDs only
+  id_dt <- unique(id_dt, by = "pat_id")
+  # Compare number of unique IDs with original list
+  if (nrow(id_dt) < length(id_list)) {
+    warning(glue::glue("Number of unique unique IDs ({nrow(id_dt)}) is less than the length of the original list ({length(id_list)}). Duplicates have been removed."))
+  }
 
   id_dt
 }
