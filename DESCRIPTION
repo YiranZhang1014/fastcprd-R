@@ -1,4 +1,4 @@
-Package: rfastcprd
+Package: fastcprd
 Title: Fast Processing of CPRD Data using DuckDB
 Version: 0.0.0.9000
 Authors@R: 
@@ -11,8 +11,9 @@ Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports: 
     data.table,
-    DBI,
+    bit64,
     duckdb,
+    DBI,
     glue
 Suggests: 
     testthat (>= 3.0.0)

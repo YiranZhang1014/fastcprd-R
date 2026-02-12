@@ -1,5 +1,3 @@
-library(data.table)
-
 #' Load and preprocess events
 #'
 #' @param path Path to CSV file
@@ -7,30 +5,28 @@ library(data.table)
 #' @param val_col Name of value column (default: "value")
 #' @return data.table with patid, event_date, and value columns
 #'
-#' @noRd - internal function, not exported
-load_and_preprocess_events <- function(path, date_cols, val_col = "value") {
-  dt <- fread(path)
-
+#' @noRd
+preprocess_events <- function(data, date_cols, val_col = "value") {
   # Convert date columns
-  dt[, (date_cols) := lapply(.SD, as.IDate, format = "%d/%m/%Y"), .SDcols = date_cols]
+  data[, (date_cols) := lapply(.SD, as.IDate), .SDcols = date_cols] # , format = "%d/%m/%Y"
+  data[, patid := bit64::as.integer64(patid)]
 
   # Handle event_date
   if (length(date_cols) == 1) {
-    setnames(dt, date_cols[1], "event_date")
+    setnames(data, date_cols[1], "event_date")
   } else {
-    dt[, event_date := fcoalesce(get(date_cols[1]), get(date_cols[2]))]
-    dt <- dt[!is.na(event_date)]
+    data[, event_date := fcoalesce(get(date_cols[1]), get(date_cols[2]))]
+    data <- data[!is.na(event_date)]
   }
 
   # Handle value column
-  if (!val_col %in% names(dt)) {
-    dt[, (val_col) := NA]
+  if (!val_col %in% names(data)) {
+    data[, (val_col) := NA]
   }
 
   # Select columns
-  dt <- dt[, .(patid, event_date, value = get(val_col))]
-
-  return(dt)
+  data <- data[, .(patid, event_date, value = get(val_col))]
+  return(data)
 }
 
 
@@ -40,8 +36,8 @@ load_and_preprocess_events <- function(path, date_cols, val_col = "value") {
 #' @param var_name Variable name
 #' @return Combined data.table of events
 #'
-#' @noRd - internal function, not exported
-merge_events <- function(var_dir, var_name) {
+#' @noRd
+merge_events_old <- function(var_dir, var_name) {
   event_list <- list()
 
   medical_path <- file.path(var_dir, paste0(var_name, "_medical.csv"))
@@ -66,28 +62,58 @@ merge_events <- function(var_dir, var_name) {
   return(rbindlist(event_list))
 }
 
+merge_events <- function(obs_path, med_code_list) {
+  event_list <- list()
+
+  # Check file existence
+  if (file.exists(obs_path)) {
+    message(paste(obs_path, "exists. Starting extraction..."))
+    res_dt <- extract_from_table(
+      table_name = "observation",
+      table_path = obs_path,
+      col_name = "medcodeid",
+      value_list = med_code_list,
+      select_cols = c("patid", "medcodeid", "obsdate", "value")
+    )
+
+    message(paste("Extraction completed. Processing data..."))
+    dt <- preprocess_events(data = res_dt, date_cols = "obsdate", val_col = "value")
+
+    # Add to list
+    event_list[[length(event_list) + 1]] <- dt
+  }
+
+  # Check if any events were loaded
+  if (length(event_list) == 0) {
+    stop(paste("No event data found for", var_name, ". Please check the paths."))
+  }
+
+  return(rbindlist(event_list))
+}
+
 
 #' Add binary variable
 #'
 #' @param data Main data.table
-#' @param var_dir Directory containing event files
+#' @param obs_path Path to observation data file
 #' @param var_name Name of the variable to add
+#' @param med_code_list List of medical codes to extract
 #' @param start_col Start date column name
 #' @param end_col End date column name
-#' @param start_offset Days to offset start (default: 0)
-#' @param end_offset Days to offset end (default: 0)
+#' @param start_offset_days Days to offset start (default: 0)
+#' @param end_offset_days Days to offset end (default: 0)
 #' @param unique_col Unique identifier column (default: "pregid")
 #' @return data.table with added binary variable
 #'
 #' @export
 add_binary_variable <- function(
-  data, var_dir, var_name,
+  data, obs_path, var_name, med_code_list,
   start_col, start_offset_days = 0,
   end_col, end_offset_days = 0,
   unique_col = "pregid"
 ) {
   dt <- copy(data)
-  events_df <- merge_events(var_dir, var_name)
+  events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
 
   # Remove existing variable if present
   if (var_name %in% names(dt)) {
@@ -138,12 +164,13 @@ add_binary_variable <- function(
 #' Add continuous variable
 #'
 #' @param data Main data.table
-#' @param var_dir Directory containing event files
+#' @param obs_path Path to observation data file
 #' @param var_name Name of the variable to add
+#' @param med_code_list List of medical codes to extract
 #' @param start_col Start date column name
 #' @param end_col End date column name
-#' @param start_offset Days to offset start (default: 0)
-#' @param end_offset Days to offset end (default: 0)
+#' @param start_offset_days Days to offset start (default: 0)
+#' @param end_offset_days Days to offset end (default: 0)
 #' @param unique_col Unique identifier column (default: "pregid")
 #' @param value_col Name of the value column in event data (default: "value")
 #' @param exclude_previous_records Whether to exclude events that fall within previous records (default: FALSE)
@@ -153,7 +180,7 @@ add_binary_variable <- function(
 #'
 #' @export
 add_continuous_variable <- function(
-  data, var_dir, var_name,
+  data, obs_path, var_name, med_code_list,
   start_col, start_offset_days = 0,
   end_col, end_offset_days = 0,
   unique_col = "pregid",
@@ -163,7 +190,7 @@ add_continuous_variable <- function(
   previous_end_col = "pregend"
 ) {
   dt <- copy(data)
-  events_df <- merge_events(var_dir, var_name)
+  events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
 
   # --- Check value_col
   if (!value_col %in% names(events_df)) {
@@ -250,10 +277,18 @@ add_previous_outcome <- function(
   data, outcome_col, new_col_name,
   time_col = "pregstart"
 ) {
-  dt <- copy(data)
+  # --- Check if outcome_col exists
+  if (!outcome_col %in% names(data)) {
+    stop(glue::glue("Error: Column '{outcome_col}' not found in data. Available columns: {paste(names(data), collapse=', ')}"))
+  }
+
+  # Remove existing variable if present
+  if (new_col_name %in% names(data)) {
+    data[, (new_col_name) := NULL]
+  }
 
   # Sort by patient and time
-  setorderv(dt, cols = c("patid", time_col))
+  setorderv(data, cols = c("patid", time_col))
 
   # Set column name
   if (is.null(new_col_name)) {
@@ -261,9 +296,9 @@ add_previous_outcome <- function(
   }
 
   # Calculate cumulative maximum and shift
-  dt[, (new_col_name) := shift(cummax(get(outcome_col)), n = 1, fill = 0),
+  data[, (new_col_name) := shift(cummax(get(outcome_col)), n = 1, fill = 0),
     by = patid
   ]
 
-  return(dt)
+  return(data)
 }

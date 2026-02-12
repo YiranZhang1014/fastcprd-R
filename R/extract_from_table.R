@@ -1,3 +1,67 @@
+extract_from_table <- function(table_name, table_path, col_name, value_list, output_path, select_cols = NULL) {
+  # Record start time
+  start_time <- Sys.time()
+  message(glue::glue("[{start_time}] Starting extraction from {table_name}."))
+
+  # Process table_path to handle wildcards
+  message("Processing table path...")
+  table_path <- process_table_path(table_path)
+  read_func <- get_read_function(table_path)
+
+  # Convert id_list to character vector if it's not already
+  message("Processing value list...")
+  id_dt <- process_value_list(value_list, col_name = col_name)
+
+  # Connect to DuckDB
+  message("Connecting to DuckDB...")
+  conn <- duckdb::dbConnect(duckdb::duckdb(), bigint = "integer64")
+  on.exit(
+    {
+      duckdb::dbDisconnect(conn, shutdown = TRUE)
+    },
+    add = TRUE
+  )
+
+  # Get the schema for the specified table
+  message("Retrieving table schema...")
+  schema <- check_schema(table_name)
+
+  # Check if the specified columns exist in the Parquet file
+  message("Processing select columns...")
+  cols <- process_select_cols(read_func, table_path, schema, select_cols, conn)
+  select_clause <- build_cast_sql(schema, cols)
+
+  # Create the SQL query to extract the subset of data based on patient IDs
+  query <- glue::glue("
+    SELECT {select_clause}
+    FROM {read_func}('{table_path}') AS cprd
+    INNER JOIN id_list_dt AS target_ids
+    ON CAST(cprd.{col_name} AS BIGINT) = CAST(target_ids.values AS BIGINT)
+  ")
+
+  message(glue::glue("Executing extraction for {length(value_list)} values..."))
+
+  # Register the id_list data.table as a temporary table in DuckDB
+  duckdb::duckdb_register(conn, "id_list_dt", id_dt)
+
+  # Enable progress bar for the query execution
+  # DBI::dbExecute(conn, "PRAGMA enable_progress_bar")
+
+  # Execute the query to extract the subset of data and write to Parquet
+  message(glue::glue("[{Sys.time()}] Executing extraction..."))
+  res_dt <-data.table::as.data.table(DBI::dbGetQuery(conn, query))
+
+  # Disconnect from the database
+  # duckdb::dbDisconnect(conn, shutdown = TRUE)
+
+  # Calculate and display execution time
+  end_time <- Sys.time()
+  elapsed_time <- difftime(end_time, start_time, units = "secs")
+  message(glue::glue("[{end_time}] Extraction completed in {round(elapsed_time/60, 2)} minutes."))
+
+  return(res_dt)
+}
+
 #' Extract subset of data by patient IDs
 #'
 #' @param table_name The name of the table to extract from (e.g., "Observation").
@@ -10,7 +74,7 @@
 #' @importFrom glue glue
 #'
 #' @export
-extract_from_table <- function(table_name, table_path, id_list, output_path, select_cols = NULL) {
+extract_from_table_patid <- function(table_name, table_path, id_list, output_path, select_cols = NULL) {
   # Record start time
   start_time <- Sys.time()
   message(glue::glue("[{start_time}] Starting extraction from {table_name}."))
@@ -22,7 +86,7 @@ extract_from_table <- function(table_name, table_path, id_list, output_path, sel
 
   # Convert id_list to character vector if it's not already
   message("Processing patient IDs...")
-  id_dt <- process_id_list(id_list)
+  id_dt <- process_value_list(id_list)
 
   # Connect to DuckDB
   message("Connecting to DuckDB...")
@@ -122,20 +186,21 @@ get_read_function <- function(table_path) {
 
 #' Helper functions for extract_from_table
 #' @noRd
-process_id_list <- function(id_list) {
-  if (!is.character(id_list)) {
-    id_list <- as.character(id_list)
+process_value_list <- function(value_list, col_name = "pat_id") {
+  # Convert to character vector if not already
+  if (!is.character(value_list)) {
+    value_list <- as.character(value_list)
   }
-  # Convert id_list to data.table
-  id_dt <- data.table::data.table(pat_id = id_list)
-  # Unique IDs only
-  id_dt <- unique(id_dt, by = "pat_id")
-  # Compare number of unique IDs with original list
-  if (nrow(id_dt) < length(id_list)) {
-    warning(glue::glue("Number of unique unique IDs ({nrow(id_dt)}) is less than the length of the original list ({length(id_list)}). Duplicates have been removed."))
+  # Convert value_list to data.table
+  value_dt <- data.table::data.table("values" = value_list)
+  # Unique values only
+  value_dt <- unique(value_dt, by = "values")
+  # Compare number of unique values with original list
+  if (nrow(value_dt) < length(value_list)) {
+    warning(glue::glue("Number of unique values ({nrow(value_dt)}) is less than the length of the original list ({length(value_list)}). Duplicates have been removed."))
   }
 
-  id_dt
+  return(value_dt)
 }
 
 #' Helper function to check for table schema
