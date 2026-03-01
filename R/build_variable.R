@@ -29,39 +29,6 @@ preprocess_events <- function(data, date_cols, val_col = "value") {
   return(data)
 }
 
-
-#' Merge events from multiple sources
-#'
-#' @param var_dir Directory containing event files
-#' @param var_name Variable name
-#' @return Combined data.table of events
-#'
-#' @noRd
-merge_events_old <- function(var_dir, var_name) {
-  event_list <- list()
-
-  medical_path <- file.path(var_dir, paste0(var_name, "_medical.csv"))
-  icd10_path <- file.path(var_dir, paste0(var_name, "_icd10.csv"))
-
-  if (file.exists(medical_path)) {
-    message(paste(medical_path, "exists."))
-    event_list[[length(event_list) + 1]] <-
-      load_and_preprocess_events(medical_path, "obsdate", "value")
-  }
-
-  if (file.exists(icd10_path)) {
-    message(paste(icd10_path, "exists."))
-    event_list[[length(event_list) + 1]] <-
-      load_and_preprocess_events(icd10_path, c("epistart", "epiend"), "value")
-  }
-
-  if (length(event_list) == 0) {
-    stop(paste("No event data found for", var_name, ". Please check the paths."))
-  }
-
-  return(rbindlist(event_list))
-}
-
 merge_events <- function(obs_path, med_code_list) {
   event_list <- list()
 
@@ -92,7 +59,7 @@ merge_events <- function(obs_path, med_code_list) {
 }
 
 
-#' Add binary variable
+#' Add binary variable (based on continuous variable logic with optional last event date)
 #'
 #' @param data Main data.table
 #' @param obs_path Path to observation data file
@@ -103,21 +70,34 @@ merge_events <- function(obs_path, med_code_list) {
 #' @param start_offset_days Days to offset start (default: 0)
 #' @param end_offset_days Days to offset end (default: 0)
 #' @param unique_col Unique identifier column (default: "pregid")
-#' @return data.table with added binary variable
+#' @param exclude_previous_records Whether to exclude events that fall within previous records (default: FALSE)
+#' @param previous_start_col Start column for previous records (default: "pregstart")
+#' @param previous_end_col End column for previous records (default: "pregend")
+#' @param keep_date Logical, whether to keep the date of the last event (default: TRUE)
+#' @return data.table with added binary variable and optional date column
 #'
 #' @export
 add_binary_variable <- function(
   data, obs_path, var_name, med_code_list,
   start_col, start_offset_days = 0,
   end_col, end_offset_days = 0,
-  unique_col = "pregid"
+  unique_col = "pregid",
+  exclude_previous_records = FALSE,
+  previous_start_col = "pregstart",
+  previous_end_col = "pregend",
+  keep_date = TRUE
 ) {
   dt <- copy(data)
   events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
 
+  date_col_name <- paste0(var_name, "_date")
+
   # Remove existing variable if present
   if (var_name %in% names(dt)) {
     dt[, (var_name) := NULL]
+  }
+  if (keep_date && date_col_name %in% names(dt)) {
+    dt[, (date_col_name) := NULL]
   }
 
   # Add time window
@@ -129,39 +109,59 @@ add_binary_variable <- function(
   # Left join to event data
   merged <- merge(dt, events_df, by = "patid", all.x = TRUE, allow.cartesian = TRUE)
 
-  # Mark if event occurred within time window
-  merged[, (var_name) := as.integer(
-    !is.na(event_date) & # Only mark if event_date is not NA
-      event_date >= window_start &
-      event_date <= window_end
-    # & event_date <= get(end_col)
-  )]
+  # 排除既往记录的逻辑（完全对齐 add_continuous_variable）
+  if (exclude_previous_records) {
+    prev_dt <- dt[, .(patid,
+      prev_start = get(previous_start_col),
+      prev_end = get(previous_end_col)
+    )]
+
+    tmp_dt <- merge(merged, prev_dt,
+      by = "patid", all.x = FALSE, allow.cartesian = TRUE
+    )
+
+    removing_events <- tmp_dt[
+      event_date >= prev_start &
+        event_date <= prev_end &
+        prev_start < get(start_col)
+    ]
+    merged <- merged[!removing_events, on = .(patid, event_date)]
+  }
 
   # Aggregate by unique_col
-  agg <- merged[, .(var_value = {
-    vals <- get(var_name)
-    if (all(is.na(vals))) { # If all values are NA, return 0
-      0L
-    } else {
-      max(vals, na.rm = TRUE)
-    }
-  }), by = unique_col]
+  agg <- merged[
+    !is.na(event_date) &
+      event_date >= window_start &
+      event_date <= window_end,
+    .(
+      var_value = 1L, # 只要筛选后有记录，直接赋值为 1L
+      var_date = max(event_date, na.rm = TRUE) # 提取最晚的事件日期
+    ),
+    by = unique_col
+  ]
 
+  # 重命名列
   setnames(agg, "var_value", var_name)
+  if (keep_date) {
+    setnames(agg, "var_date", date_col_name)
+  } else {
+    agg[, var_date := NULL]
+  }
 
-  # Join back to original data
+  # 连接回原数据
   final_dt <- merge(dt, agg, by = unique_col, all.x = TRUE)
 
-  # 修改：确保缺失值填充为 0
-  final_dt[is.na(get(var_name)) | is.infinite(get(var_name)), (var_name) := 0L]
+  # 关键步骤：对于合并后没有匹配到 1L 的（即没有记录的），填充为 0L
+  final_dt[is.na(get(var_name)), (var_name) := 0L]
 
-  # Remove temporary columns
+  # 清理临时列
   final_dt[, c("window_start", "window_end") := NULL]
 
   return(final_dt)
 }
 
-#' Add continuous variable
+
+#' Add continuous variable (with optional last event date)
 #'
 #' @param data Main data.table
 #' @param obs_path Path to observation data file
@@ -176,7 +176,8 @@ add_binary_variable <- function(
 #' @param exclude_previous_records Whether to exclude events that fall within previous records (default: FALSE)
 #' @param previous_start_col Start column for previous records (default: "pregstart")
 #' @param previous_end_col End column for previous records (default: "pregend")
-#' @return data.table with added continuous variable
+#' @param keep_date Logical, whether to keep the date of the last event (default: TRUE)
+#' @return data.table with added continuous variable and optional date column
 #'
 #' @export
 add_continuous_variable <- function(
@@ -187,19 +188,25 @@ add_continuous_variable <- function(
   value_col = "value",
   exclude_previous_records = FALSE,
   previous_start_col = "pregstart",
-  previous_end_col = "pregend"
+  previous_end_col = "pregend",
+  keep_date = TRUE
 ) {
   dt <- copy(data)
   events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
+
+  date_col_name <- paste0(var_name, "_date")
 
   # --- Check value_col
   if (!value_col %in% names(events_df)) {
     stop(glue::glue("Error: Column '{value_col}' not found in event data. Available columns: {paste(names(events_df), collapse=', ')}"))
   }
 
-  # Remove existing variable if present
+  # Remove existing variables if present
   if (var_name %in% names(dt)) {
     dt[, (var_name) := NULL]
+  }
+  if (keep_date && date_col_name %in% names(dt)) {
+    dt[, (date_col_name) := NULL]
   }
 
   # Add time window
@@ -237,22 +244,30 @@ add_continuous_variable <- function(
     # Only consider records where event_date is not NA and value_col is not NA,
     # and within the time window
     !is.na(event_date) &
-      !is.na(get(value_col)) & # Ensure value_col is not NA
+      !is.na(get(value_col)) &
       event_date >= window_start &
       event_date <= window_end,
-
-    # Select the value corresponding to the most recent event_date within the window
-    .(var_value = {
-      vals <- get(value_col)
-      dates <- event_date
-      # which.max will return the index of the maximum date
-      # This corresponds to the "most recent value"
-      vals[which.max(dates)]
-    }),
+    .(
+      var_value = {
+        vals <- get(value_col)
+        dates <- event_date
+        vals[which.max(dates)] # The last date value
+      },
+      var_date = {
+        dates <- event_date
+        max(dates, na.rm = TRUE) # Keep the date of the last event
+      }
+    ),
     by = unique_col
   ]
 
+  # Rename columns
   setnames(agg, "var_value", var_name)
+  if (keep_date) {
+    setnames(agg, "var_date", date_col_name)
+  } else {
+    agg[, var_date := NULL]
+  }
 
   # Join back to original data
   final_dt <- merge(dt, agg, by = unique_col, all.x = TRUE)
