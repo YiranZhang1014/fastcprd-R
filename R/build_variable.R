@@ -169,37 +169,6 @@ add_binary_variable <- function(
 #' @return data.table with added previous outcome column
 #'
 #' @export
-add_previous_outcome <- function(
-  data, outcome_col, new_col_name,
-  time_col = "pregstart"
-) {
-  # --- Check if outcome_col exists
-  if (!outcome_col %in% names(data)) {
-    stop(glue::glue("Error: Column '{outcome_col}' not found in data. Available columns: {paste(names(data), collapse=', ')}"))
-  }
-
-  # Remove existing variable if present
-  if (new_col_name %in% names(data)) {
-    data[, (new_col_name) := NULL]
-  }
-
-  # Sort by patient and time
-  setorderv(data, cols = c("patid", time_col))
-
-  # Set column name
-  if (is.null(new_col_name)) {
-    new_col_name <- paste0("pre_", outcome_col)
-  }
-
-  # Calculate cumulative maximum and shift
-  data[, (new_col_name) := shift(cummax(get(outcome_col)), n = 1, fill = 0),
-    by = patid
-  ]
-
-  return(data)
-}
-
-
 #' Core internal function to add variables
 #'
 #' @noRd
@@ -207,9 +176,12 @@ add_previous_outcome <- function(
   data, obs_path, var_name, med_code_list,
   start_col, start_offset_days, end_col, end_offset_days,
   unique_col, exclude_previous_records, previous_start_col, previous_end_col,
-  keep_date, var_type = c("binary", "continuous"), value_col = NULL
+  keep_date, var_type = c("binary", "continuous"), value_col = NULL,
+  keep_record = c("first", "last") # 新增参数：控制提取最早还是最晚记录
 ) {
   var_type <- match.arg(var_type)
+  keep_record <- match.arg(keep_record) # 参数验证
+
   dt <- copy(data)
 
   # Load and preprocess events
@@ -269,7 +241,11 @@ add_previous_outcome <- function(
         event_date <= window_end,
       .(
         var_value = 1L,
-        var_date = max(event_date, na.rm = TRUE)
+        var_date = if (keep_record == "last") {
+          max(event_date, na.rm = TRUE)
+        } else {
+          min(event_date, na.rm = TRUE)
+        }
       ),
       by = unique_col
     ]
@@ -283,9 +259,17 @@ add_previous_outcome <- function(
         var_value = {
           vals <- get(value_col)
           dates <- event_date
-          vals[which.max(dates)]
+          if (keep_record == "last") {
+            vals[which.max(dates)]
+          } else {
+            vals[which.min(dates)]
+          }
         },
-        var_date = max(event_date, na.rm = TRUE)
+        var_date = if (keep_record == "last") {
+          max(event_date, na.rm = TRUE)
+        } else {
+          min(event_date, na.rm = TRUE)
+        }
       ),
       by = unique_col
     ]
@@ -301,7 +285,7 @@ add_previous_outcome <- function(
 
   final_dt <- merge(dt, agg, by = unique_col, all.x = TRUE)
 
-  # 
+  # Fill missing binary values with 0
   if (var_type == "binary") {
     final_dt[is.na(get(var_name)), (var_name) := 0L]
   }
@@ -324,7 +308,8 @@ add_binary_variable <- function(
   exclude_previous_records = FALSE,
   previous_start_col = "pregstart",
   previous_end_col = "pregend",
-  keep_date = TRUE
+  keep_date = TRUE,
+  keep_record = "last"
 ) {
   .add_variable_core(
     data = data, obs_path = obs_path, var_name = var_name, med_code_list = med_code_list,
@@ -333,7 +318,7 @@ add_binary_variable <- function(
     unique_col = unique_col, exclude_previous_records = exclude_previous_records,
     previous_start_col = previous_start_col, previous_end_col = previous_end_col,
     keep_date = keep_date,
-    var_type = "binary" 
+    var_type = "binary"
   )
 }
 
@@ -349,7 +334,8 @@ add_continuous_variable <- function(
   exclude_previous_records = FALSE,
   previous_start_col = "pregstart",
   previous_end_col = "pregend",
-  keep_date = TRUE
+  keep_date = TRUE,
+  keep_record = "last"
 ) {
   .add_variable_core(
     data = data, obs_path = obs_path, var_name = var_name, med_code_list = med_code_list,
@@ -358,7 +344,7 @@ add_continuous_variable <- function(
     unique_col = unique_col, exclude_previous_records = exclude_previous_records,
     previous_start_col = previous_start_col, previous_end_col = previous_end_col,
     keep_date = keep_date,
-    var_type = "continuous", 
-    value_col = value_col 
+    var_type = "continuous",
+    value_col = value_col
   )
 }
