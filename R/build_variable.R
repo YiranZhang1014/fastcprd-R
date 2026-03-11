@@ -1,6 +1,6 @@
 #' Load and preprocess events
 #'
-#' @param path Path to CSV file
+#' @param data data.table containing event data
 #' @param date_cols Character vector of date column names
 #' @param val_col Name of value column (default: "value")
 #' @return data.table with patid, event_date, and value columns
@@ -29,6 +29,11 @@ preprocess_events <- function(data, date_cols, val_col = "value") {
   return(data)
 }
 
+#' Merge events from observation data based on medical codes
+#'
+#' @param obs_path Path to observation data file
+#' @param med_code_list List of medical codes to extract
+#' @return data.table with patid, event_date, and value columns for matching events
 merge_events <- function(obs_path, med_code_list) {
   event_list <- list()
 
@@ -44,7 +49,11 @@ merge_events <- function(obs_path, med_code_list) {
     )
 
     message(paste("Extraction completed. Processing data..."))
-    dt <- preprocess_events(data = res_dt, date_cols = "obsdate", val_col = "value")
+    dt <- preprocess_events(
+      data = res_dt,
+      date_cols = "obsdate",
+      val_col = "value"
+    )
 
     # Add to list
     event_list[[length(event_list) + 1]] <- dt
@@ -52,7 +61,11 @@ merge_events <- function(obs_path, med_code_list) {
 
   # Check if any events were loaded
   if (length(event_list) == 0) {
-    stop(paste("No event data found for", var_name, ". Please check the paths."))
+    stop(paste(
+      "No event data found for",
+      var_name,
+      ". Please check the paths."
+    ))
   }
 
   return(rbindlist(event_list))
@@ -78,9 +91,14 @@ merge_events <- function(obs_path, med_code_list) {
 #'
 #' @export
 add_binary_variable <- function(
-  data, obs_path, var_name, med_code_list,
-  start_col, start_offset_days = 0,
-  end_col, end_offset_days = 0,
+  data,
+  obs_path,
+  var_name,
+  med_code_list,
+  start_col,
+  start_offset_days = 0,
+  end_col,
+  end_offset_days = 0,
   unique_col = "pregid",
   exclude_previous_records = FALSE,
   previous_start_col = "pregstart",
@@ -107,17 +125,28 @@ add_binary_variable <- function(
   )]
 
   # Left join to event data
-  merged <- merge(dt, events_df, by = "patid", all.x = TRUE, allow.cartesian = TRUE)
+  merged <- merge(
+    dt,
+    events_df,
+    by = "patid",
+    all.x = TRUE,
+    allow.cartesian = TRUE
+  )
 
   # Exclude previous records logic
   if (exclude_previous_records) {
-    prev_dt <- dt[, .(patid,
+    prev_dt <- dt[, .(
+      patid,
       prev_start = get(previous_start_col),
       prev_end = get(previous_end_col)
     )]
 
-    tmp_dt <- merge(merged, prev_dt,
-      by = "patid", all.x = FALSE, allow.cartesian = TRUE
+    tmp_dt <- merge(
+      merged,
+      prev_dt,
+      by = "patid",
+      all.x = FALSE,
+      allow.cartesian = TRUE
     )
 
     removing_events <- tmp_dt[
@@ -173,10 +202,21 @@ add_binary_variable <- function(
 #'
 #' @noRd
 .add_variable_core <- function(
-  data, obs_path, var_name, med_code_list,
-  start_col, start_offset_days, end_col, end_offset_days,
-  unique_col, exclude_previous_records, previous_start_col, previous_end_col,
-  keep_date, var_type = c("binary", "continuous"), value_col = NULL,
+  data,
+  obs_path,
+  var_name,
+  med_code_list,
+  start_col,
+  start_offset_days,
+  end_col,
+  end_offset_days,
+  unique_col,
+  exclude_previous_records,
+  previous_start_col,
+  previous_end_col,
+  keep_date,
+  var_type = c("binary", "continuous"),
+  value_col = NULL,
   keep_record = c("first", "last") # 新增参数：控制提取最早还是最晚记录
 ) {
   var_type <- match.arg(var_type)
@@ -195,7 +235,9 @@ add_binary_variable <- function(
   events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
 
   if (var_type == "continuous" && !value_col %in% names(events_df)) {
-    stop(glue::glue("Error: Column '{value_col}' not found in event data. Available columns: {paste(names(events_df), collapse=', ')}"))
+    stop(glue::glue(
+      "Error: Column '{value_col}' not found in event data. Available columns: {paste(names(events_df), collapse=', ')}"
+    ))
   }
 
   date_col_name <- paste0(var_name, "_date")
@@ -215,15 +257,28 @@ add_binary_variable <- function(
   )]
 
   # Left join with event data
-  merged <- merge(dt, events_df, by = "patid", all.x = TRUE, allow.cartesian = TRUE)
+  merged <- merge(
+    dt,
+    events_df,
+    by = "patid",
+    all.x = TRUE,
+    allow.cartesian = TRUE
+  )
 
   if (exclude_previous_records) {
-    prev_dt <- dt[, .(patid,
+    prev_dt <- dt[, .(
+      patid,
       prev_start = get(previous_start_col),
       prev_end = get(previous_end_col)
     )]
 
-    tmp_dt <- merge(merged, prev_dt, by = "patid", all.x = FALSE, allow.cartesian = TRUE)
+    tmp_dt <- merge(
+      merged,
+      prev_dt,
+      by = "patid",
+      all.x = FALSE,
+      allow.cartesian = TRUE
+    )
 
     removing_events <- tmp_dt[
       event_date >= prev_start &
@@ -301,9 +356,14 @@ add_binary_variable <- function(
 #'
 #' @export
 add_binary_variable <- function(
-  data, obs_path, var_name, med_code_list,
-  start_col, start_offset_days = 0,
-  end_col, end_offset_days = 0,
+  data,
+  obs_path,
+  var_name,
+  med_code_list,
+  start_col,
+  start_offset_days = 0,
+  end_col,
+  end_offset_days = 0,
   unique_col = "pregid",
   exclude_previous_records = FALSE,
   previous_start_col = "pregstart",
@@ -312,11 +372,18 @@ add_binary_variable <- function(
   keep_record = "last"
 ) {
   .add_variable_core(
-    data = data, obs_path = obs_path, var_name = var_name, med_code_list = med_code_list,
-    start_col = start_col, start_offset_days = start_offset_days,
-    end_col = end_col, end_offset_days = end_offset_days,
-    unique_col = unique_col, exclude_previous_records = exclude_previous_records,
-    previous_start_col = previous_start_col, previous_end_col = previous_end_col,
+    data = data,
+    obs_path = obs_path,
+    var_name = var_name,
+    med_code_list = med_code_list,
+    start_col = start_col,
+    start_offset_days = start_offset_days,
+    end_col = end_col,
+    end_offset_days = end_offset_days,
+    unique_col = unique_col,
+    exclude_previous_records = exclude_previous_records,
+    previous_start_col = previous_start_col,
+    previous_end_col = previous_end_col,
     keep_date = keep_date,
     var_type = "binary"
   )
@@ -326,9 +393,14 @@ add_binary_variable <- function(
 #'
 #' @export
 add_continuous_variable <- function(
-  data, obs_path, var_name, med_code_list,
-  start_col, start_offset_days = 0,
-  end_col, end_offset_days = 0,
+  data,
+  obs_path,
+  var_name,
+  med_code_list,
+  start_col,
+  start_offset_days = 0,
+  end_col,
+  end_offset_days = 0,
   unique_col = "pregid",
   value_col = "value",
   exclude_previous_records = FALSE,
@@ -338,11 +410,18 @@ add_continuous_variable <- function(
   keep_record = "last"
 ) {
   .add_variable_core(
-    data = data, obs_path = obs_path, var_name = var_name, med_code_list = med_code_list,
-    start_col = start_col, start_offset_days = start_offset_days,
-    end_col = end_col, end_offset_days = end_offset_days,
-    unique_col = unique_col, exclude_previous_records = exclude_previous_records,
-    previous_start_col = previous_start_col, previous_end_col = previous_end_col,
+    data = data,
+    obs_path = obs_path,
+    var_name = var_name,
+    med_code_list = med_code_list,
+    start_col = start_col,
+    start_offset_days = start_offset_days,
+    end_col = end_col,
+    end_offset_days = end_offset_days,
+    unique_col = unique_col,
+    exclude_previous_records = exclude_previous_records,
+    previous_start_col = previous_start_col,
+    previous_end_col = previous_end_col,
     keep_date = keep_date,
     var_type = "continuous",
     value_col = value_col

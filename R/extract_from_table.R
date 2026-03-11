@@ -1,3 +1,18 @@
+#' Extract subset of data by specified column and values
+#' @param table_name The name of the table to extract from (e.g., "Observation").
+#' @param table_path The path to the Parquet file containing the table data.
+#' @param col_name The name of the column to filter on (e.g., "pat_id").
+#' @param value_list A vector of values to filter the specified column by.
+#' @param output_path The path where the extracted subset of data will be saved in Parquet format.
+#' @param select_cols Optional vector of column names to select from the table. If NULL, all columns will be selected.
+#' @return A data.table containing the extracted subset of data.
+#'
+#' @import data.table
+#' @importFrom glue glue
+#' @importFrom duckdb duckdb duckdb_register
+#' @importFrom DBI dbConnect dbDisconnect dbGetQuery dbExecute
+#' 
+#' @export
 extract_from_table <- function(table_name, table_path, col_name, value_list, output_path, select_cols = NULL) {
   # Record start time
   start_time <- Sys.time()
@@ -184,7 +199,8 @@ get_read_function <- function(table_path) {
 }
 
 
-#' Helper functions for extract_from_table
+#' Helper functions for `extract_from_table`
+#' 
 #' @noRd
 process_value_list <- function(value_list, col_name = "pat_id") {
   # Convert to character vector if not already
