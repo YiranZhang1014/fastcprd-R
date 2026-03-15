@@ -1,4 +1,4 @@
-#' Load and preprocess events
+#' Preprocess event
 #'
 #' @param data data.table containing event data
 #' @param date_cols Character vector of date column names
@@ -29,165 +29,6 @@ preprocess_events <- function(data, date_cols, val_col = "value") {
   return(data)
 }
 
-#' Merge events from observation data based on medical codes
-#'
-#' @param obs_path Path to observation data file
-#' @param med_code_list List of medical codes to extract
-#' @return data.table with patid, event_date, and value columns for matching events
-merge_events <- function(obs_path, med_code_list) {
-  event_list <- list()
-
-  # Check file existence
-  if (file.exists(obs_path)) {
-    message(paste(obs_path, "exists. Starting extraction..."))
-    res_dt <- extract_from_table(
-      table_name = "observation",
-      table_path = obs_path,
-      col_name = "medcodeid",
-      value_list = med_code_list,
-      select_cols = c("patid", "medcodeid", "obsdate", "value")
-    )
-
-    message(paste("Extraction completed. Processing data..."))
-    dt <- preprocess_events(
-      data = res_dt,
-      date_cols = "obsdate",
-      val_col = "value"
-    )
-
-    # Add to list
-    event_list[[length(event_list) + 1]] <- dt
-  }
-
-  # Check if any events were loaded
-  if (length(event_list) == 0) {
-    stop(paste(
-      "No event data found for",
-      var_name,
-      ". Please check the paths."
-    ))
-  }
-
-  return(rbindlist(event_list))
-}
-
-
-#' Add binary variable (based on continuous variable logic with optional last event date)
-#'
-#' @param data Main data.table
-#' @param obs_path Path to observation data file
-#' @param var_name Name of the variable to add
-#' @param med_code_list List of medical codes to extract
-#' @param start_col Start date column name
-#' @param end_col End date column name
-#' @param start_offset_days Days to offset start (default: 0)
-#' @param end_offset_days Days to offset end (default: 0)
-#' @param unique_col Unique identifier column (default: "pregid")
-#' @param exclude_previous_records Whether to exclude events that fall within previous records (default: FALSE)
-#' @param previous_start_col Start column for previous records (default: "pregstart")
-#' @param previous_end_col End column for previous records (default: "pregend")
-#' @param keep_date Logical, whether to keep the date of the last event (default: TRUE)
-#' @return data.table with added binary variable and optional date column
-#'
-#' @export
-add_binary_variable <- function(
-  data,
-  obs_path,
-  var_name,
-  med_code_list,
-  start_col,
-  start_offset_days = 0,
-  end_col,
-  end_offset_days = 0,
-  unique_col = "pregid",
-  exclude_previous_records = FALSE,
-  previous_start_col = "pregstart",
-  previous_end_col = "pregend",
-  keep_date = TRUE
-) {
-  dt <- copy(data)
-  events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
-
-  date_col_name <- paste0(var_name, "_date")
-
-  # Remove existing variable if present
-  if (var_name %in% names(dt)) {
-    dt[, (var_name) := NULL]
-  }
-  if (keep_date && date_col_name %in% names(dt)) {
-    dt[, (date_col_name) := NULL]
-  }
-
-  # Add time window
-  dt[, `:=`(
-    window_start = get(start_col) + start_offset_days,
-    window_end = get(end_col) + end_offset_days
-  )]
-
-  # Left join to event data
-  merged <- merge(
-    dt,
-    events_df,
-    by = "patid",
-    all.x = TRUE,
-    allow.cartesian = TRUE
-  )
-
-  # Exclude previous records logic
-  if (exclude_previous_records) {
-    prev_dt <- dt[, .(
-      patid,
-      prev_start = get(previous_start_col),
-      prev_end = get(previous_end_col)
-    )]
-
-    tmp_dt <- merge(
-      merged,
-      prev_dt,
-      by = "patid",
-      all.x = FALSE,
-      allow.cartesian = TRUE
-    )
-
-    removing_events <- tmp_dt[
-      event_date >= prev_start &
-        event_date <= prev_end &
-        prev_start < get(start_col)
-    ]
-    merged <- merged[!removing_events, on = .(patid, event_date)]
-  }
-
-  # Aggregate by unique_col
-  agg <- merged[
-    !is.na(event_date) &
-      event_date >= window_start &
-      event_date <= window_end,
-    .(
-      var_value = 1L, # Set to 1L if any event exists in the window
-      var_date = max(event_date, na.rm = TRUE) # Extract the date of the last event in the window
-    ),
-    by = unique_col
-  ]
-
-  # Rename and merge back
-  setnames(agg, "var_value", var_name)
-  if (keep_date) {
-    setnames(agg, "var_date", date_col_name)
-  } else {
-    agg[, var_date := NULL]
-  }
-
-  final_dt <- merge(dt, agg, by = unique_col, all.x = TRUE)
-
-  # Fill missing binary variable with 0L
-  final_dt[is.na(get(var_name)), (var_name) := 0L]
-
-  # Clean up temporary window columns
-  final_dt[, c("window_start", "window_end") := NULL]
-
-  return(final_dt)
-}
-
 
 #' Add previous outcome indicator
 #'
@@ -203,40 +44,43 @@ add_binary_variable <- function(
 #' @noRd
 .add_variable_core <- function(
   data,
-  obs_path,
+  events_data,
   var_name,
-  med_code_list,
   start_col,
   start_offset_days,
   end_col,
   end_offset_days,
   unique_col,
-  exclude_previous_records,
+  exclude_previous_records = FALSE,
   previous_start_col,
   previous_end_col,
-  keep_date,
+  keep_date = TRUE,
   var_type = c("binary", "continuous"),
   value_col = NULL,
-  keep_record = c("first", "last") # 新增参数：控制提取最早还是最晚记录
+  keep_record = c("first", "last") # Allow to keep first or last record within the time window
 ) {
+  # Validate inputs
   var_type <- match.arg(var_type)
-  keep_record <- match.arg(keep_record) # 参数验证
+  keep_record <- match.arg(keep_record)
 
+  # Check whether `events_data`contains necessary columns
+  required_cols <- c("patid", "event_date")
+  if (!all(required_cols %in% names(events_data))) {
+    stop(glue::glue(
+      "Error: 'events_data' must contain the following columns: {paste(required_cols, collapse=', ')}. Available columns: {paste(names(events_data), collapse=', ')}"
+    ))
+  }
+  # Ensure `event_date` is of Date type, transform if necessary
+  if (!inherits(events_data$event_date, "Date")) {
+    events_data[, event_date := as.IDate(event_date)]
+  }
+
+  # Make a copy of the input data to avoid modifying the original
   dt <- copy(data)
 
-  # Load and preprocess events
-  # Check `med_code_list` is not empty and integer64 type
-  if (length(med_code_list) == 0) {
-    stop("Error: med_code_list cannot be empty.")
-  }
-  if (!bit64::is.integer64(med_code_list)) {
-    med_code_list <- bit64::as.integer64(med_code_list)
-  }
-  events_df <- merge_events(obs_path = obs_path, med_code_list = med_code_list)
-
-  if (var_type == "continuous" && !value_col %in% names(events_df)) {
+  if (var_type == "continuous" && !value_col %in% names(events_data)) {
     stop(glue::glue(
-      "Error: Column '{value_col}' not found in event data. Available columns: {paste(names(events_df), collapse=', ')}"
+      "Error: Column '{value_col}' not found in event data. Available columns: {paste(names(events_data), collapse=', ')}"
     ))
   }
 
@@ -259,7 +103,7 @@ add_binary_variable <- function(
   # Left join with event data
   merged <- merge(
     dt,
-    events_df,
+    events_data,
     by = "patid",
     all.x = TRUE,
     allow.cartesian = TRUE
@@ -357,9 +201,11 @@ add_binary_variable <- function(
 #' @export
 add_binary_variable <- function(
   data,
-  obs_path,
+  obs_path = NULL,
+  med_code_list = NULL,
+  hes_epi_path = NULL,
+  icd_code_list = NULL,
   var_name,
-  med_code_list,
   start_col,
   start_offset_days = 0,
   end_col,
@@ -371,11 +217,40 @@ add_binary_variable <- function(
   keep_date = TRUE,
   keep_record = "last"
 ) {
+  # Check the obs_path and hes_epi_path
+  if (!file.exists(obs_path) && !file.exists(hes_epi_path)) {
+    stop(glue::glue(
+      "Error: Neither 'obs_path' nor 'hes_epi_path' exists. Please provide a valid path for at least one of them."
+    ))
+  }
+
+  # Read and extract events from obs_path and hes_epi_path if they exist
+  if (file.exists(obs_path)) {
+    med_extracted_dt <- extract_event_and_date.aurum_obs(
+      X = obs_path,
+      med_code_list = med_code_list
+    )
+  } else {
+    (med_extracted_dt <- NULL)
+  }
+
+  if (file.exists(hes_epi_path)) {
+    icd_extracted_dt <- extract_event_and_date.hes_episodes(
+      X = hes_epi_path,
+      icd_code_list = icd_code_list
+    )
+  } else {
+    (icd_extracted_dt <- NULL)
+  }
+
+  # Merge extracted data
+  merged_dt <- rbindlist(list(med_extracted_dt, icd_extracted_dt), fill = TRUE)
+
+  # Execute core variable building function
   .add_variable_core(
     data = data,
-    obs_path = obs_path,
+    events_data = merged_dt,
     var_name = var_name,
-    med_code_list = med_code_list,
     start_col = start_col,
     start_offset_days = start_offset_days,
     end_col = end_col,
@@ -385,7 +260,8 @@ add_binary_variable <- function(
     previous_start_col = previous_start_col,
     previous_end_col = previous_end_col,
     keep_date = keep_date,
-    var_type = "binary"
+    var_type = "binary",
+    keep_record = keep_record
   )
 }
 
@@ -394,9 +270,11 @@ add_binary_variable <- function(
 #' @export
 add_continuous_variable <- function(
   data,
-  obs_path,
+  obs_path = NULL,
+  med_code_list = NULL,
+  hes_epi_path = NULL,
+  icd_code_list = NULL,
   var_name,
-  med_code_list,
   start_col,
   start_offset_days = 0,
   end_col,
@@ -409,11 +287,33 @@ add_continuous_variable <- function(
   keep_date = TRUE,
   keep_record = "last"
 ) {
+  # Check the obs_path and hes_epi_path
+  if (!file.exists(obs_path)) {
+    stop(glue::glue(
+      "Error: 'obs_path' does not exist. Continuous variable extraction requires a valid 'obs_path'."
+    ))
+  }
+
+  # Read and extract events from obs_path and hes_epi_path if they exist
+  if (file.exists(obs_path)) {
+    med_extracted_dt <- extract_event_and_date.aurum_obs(
+      X = obs_path,
+      med_code_list = med_code_list
+    )
+  } else {
+    (med_extracted_dt <- NULL)
+  }
+  # If `hes_epi_path` set, warning that it will be ignored for continuous variable extraction
+  if (!is.null(hes_epi_path)) {
+    warning(glue::glue(
+      "Warning: 'hes_epi_path' is provided but will be ignored for continuous variable extraction. Only 'obs_path' will be used."
+    ))
+  }
+
   .add_variable_core(
     data = data,
-    obs_path = obs_path,
+    events_data = med_extracted_dt, # Only use obs data for continuous variable
     var_name = var_name,
-    med_code_list = med_code_list,
     start_col = start_col,
     start_offset_days = start_offset_days,
     end_col = end_col,
@@ -424,6 +324,7 @@ add_continuous_variable <- function(
     previous_end_col = previous_end_col,
     keep_date = keep_date,
     var_type = "continuous",
+    keep_record = keep_record, 
     value_col = value_col
   )
 }

@@ -19,16 +19,16 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
   message(glue::glue("[{start_time}] Starting extraction from {table_name}."))
 
   # Process table_path to handle wildcards
-  message("Processing table path...")
+  # message("Processing table path...")
   table_path <- process_table_path(table_path)
   read_func <- get_read_function(table_path)
 
   # Convert id_list to character vector if it's not already
-  message("Processing value list...")
+  # message("Processing value list...")
   id_dt <- process_value_list(value_list, col_name = col_name)
 
   # Connect to DuckDB
-  message("Connecting to DuckDB...")
+  # message("Connecting to DuckDB...")
   conn <- duckdb::dbConnect(duckdb::duckdb(), bigint = "integer64")
   on.exit(
     {
@@ -38,11 +38,11 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
   )
 
   # Get the schema for the specified table
-  message("Retrieving table schema...")
+  # message("Retrieving table schema...")
   schema <- check_schema(table_name)
 
   # Check if the specified columns exist in the Parquet file
-  message("Processing select columns...")
+  # message("Processing select columns...")
   cols <- process_select_cols(read_func, table_path, schema, select_cols, conn)
   select_clause <- build_cast_sql(schema, cols)
 
@@ -63,7 +63,7 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
   # DBI::dbExecute(conn, "PRAGMA enable_progress_bar")
 
   # Execute the query to extract the subset of data and write to Parquet
-  message(glue::glue("[{Sys.time()}] Executing extraction..."))
+  # message(glue::glue("[{Sys.time()}] Executing extraction..."))
   res_dt <-data.table::as.data.table(DBI::dbGetQuery(conn, query))
 
   # Disconnect from the database
