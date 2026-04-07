@@ -4,6 +4,8 @@ extract_event_and_date <- function(X, ...) {
   UseMethod("extract_event_and_date")
 }
 
+
+#' @export
 extract_event_and_date.default <- function(X, ...) {
   stop("No method available for class ", class(data))
 }
@@ -63,20 +65,24 @@ extract_event_and_date.aurum_obs <- function(X, med_code_list) {
 #' @param X A data.table or a list containing the path to the HES episodes table.
 #' @param icd_code_list A vector of ICD codes to filter the episodes records.
 #' @return A data.table containing the patient ID and the corresponding event date for the specified ICD codes.
+#' 
+#' @export
 extract_event_and_date.hes_episodes <- function(X, icd_code_list) {
   # Make sure the `icd_code_list` is character type for substring operation
   icd_code_list <- as.character(icd_code_list)
   # Cut the `icd_code_list` to 5 characters to match the format in HES episodes table
   icd_code_list <- substr(icd_code_list, 1, 5)
 
-  # Check if X is a data.table or list,
-  # if data.table, use it directly; if list, read the data from the specified path
+  # Check X 
   if (is.data.table(X)) {
+    # if data.table, use it directly
     dt <- X
   } else if (is.list(X) && !is.null(X$data_path)) {
+    # if list and has data_path, read the data from the specified path
     data_path <- X$data_path
     dt <- data.table::fread(data_path)
   } else if (is.character(X) && file.exists(X)) {
+    # if X is a character string and the file exists, read the data from the specified path
     dt <- data.table::fread(X)
   } else {
     stop("Input X must be a data.table or a list containing 'data_path'.")

@@ -1,7 +1,8 @@
 #' Extract subset of data by specified column and values
+#' 
 #' @param table_name The name of the table to extract from (e.g., "Observation").
 #' @param table_path The path to the Parquet file containing the table data.
-#' @param col_name The name of the column to filter on (e.g., "pat_id").
+#' @param col_name The name of the column to filter on (e.g., "patid").
 #' @param value_list A vector of values to filter the specified column by.
 #' @param output_path The path where the extracted subset of data will be saved in Parquet format.
 #' @param select_cols Optional vector of column names to select from the table. If NULL, all columns will be selected.
@@ -11,9 +12,16 @@
 #' @importFrom glue glue
 #' @importFrom duckdb duckdb duckdb_register
 #' @importFrom DBI dbConnect dbDisconnect dbGetQuery dbExecute
-#' 
+#'
 #' @export
-extract_from_table <- function(table_name, table_path, col_name, value_list, output_path, select_cols = NULL) {
+extract_from_table <- function(
+  table_name,
+  table_path,
+  col_name,
+  value_list,
+  output_path,
+  select_cols = NULL
+) {
   # Record start time
   start_time <- Sys.time()
   message(glue::glue("[{start_time}] Starting extraction from {table_name}."))
@@ -47,12 +55,14 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
   select_clause <- build_cast_sql(schema, cols)
 
   # Create the SQL query to extract the subset of data based on patient IDs
-  query <- glue::glue("
+  query <- glue::glue(
+    "
     SELECT {select_clause}
     FROM {read_func}('{table_path}') AS cprd
     INNER JOIN id_list_dt AS target_ids
     ON CAST(cprd.{col_name} AS BIGINT) = CAST(target_ids.values AS BIGINT)
-  ")
+  "
+  )
 
   message(glue::glue("Executing extraction for {length(value_list)} values..."))
 
@@ -64,7 +74,7 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
 
   # Execute the query to extract the subset of data and write to Parquet
   # message(glue::glue("[{Sys.time()}] Executing extraction..."))
-  res_dt <-data.table::as.data.table(DBI::dbGetQuery(conn, query))
+  res_dt <- data.table::as.data.table(DBI::dbGetQuery(conn, query))
 
   # Disconnect from the database
   # duckdb::dbDisconnect(conn, shutdown = TRUE)
@@ -72,12 +82,15 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
   # Calculate and display execution time
   end_time <- Sys.time()
   elapsed_time <- difftime(end_time, start_time, units = "secs")
-  message(glue::glue("[{end_time}] Extraction completed in {round(elapsed_time/60, 2)} minutes."))
+  message(glue::glue(
+    "[{end_time}] Extraction completed in {round(elapsed_time/60, 2)} minutes."
+  ))
 
   return(res_dt)
 }
 
-#' Extract subset of data by patient IDs
+# extract_from_table_patid ----
+#' Extract subset of data by patient IDs, and write directly to Parquet file
 #'
 #' @param table_name The name of the table to extract from (e.g., "Observation").
 #' @param table_path The path to the Parquet file containing the table data.
@@ -89,7 +102,13 @@ extract_from_table <- function(table_name, table_path, col_name, value_list, out
 #' @importFrom glue glue
 #'
 #' @export
-extract_from_table_patid <- function(table_name, table_path, id_list, output_path, select_cols = NULL) {
+extract_from_table_patid <- function(
+  table_name,
+  table_path,
+  id_list,
+  output_path,
+  select_cols = NULL
+) {
   # Record start time
   start_time <- Sys.time()
   message(glue::glue("[{start_time}] Starting extraction from {table_name}."))
@@ -102,6 +121,7 @@ extract_from_table_patid <- function(table_name, table_path, id_list, output_pat
   # Convert id_list to character vector if it's not already
   message("Processing patient IDs...")
   id_dt <- process_value_list(id_list)
+  print(str(id_dt))
 
   # Connect to DuckDB
   message("Connecting to DuckDB...")
@@ -122,18 +142,21 @@ extract_from_table_patid <- function(table_name, table_path, id_list, output_pat
   cols <- process_select_cols(read_func, table_path, schema, select_cols, conn)
   select_clause <- build_cast_sql(schema, cols)
 
-
   # Create the SQL query to extract the subset of data based on patient IDs
-  query <- glue::glue("
+  query <- glue::glue(
+    "
     COPY (
       SELECT {select_clause}
       FROM {read_func}('{table_path}') AS cprd
       INNER JOIN id_list_dt AS pat
-      ON CAST(cprd.patid AS BIGINT) = CAST(pat.pat_id AS BIGINT)
+      ON CAST(cprd.patid AS BIGINT) = CAST(pat.patid AS BIGINT)
     ) TO '{output_path}' (FORMAT 'parquet', COMPRESSION 'ZSTD')
-  ")
+  "
+  )
 
-  message(glue::glue("Executing extraction for {length(id_list)} patient IDs..."))
+  message(glue::glue(
+    "Executing extraction for {length(id_list)} patient IDs..."
+  ))
 
   # Enable progress bar for the query execution
   DBI::dbExecute(conn, "PRAGMA enable_progress_bar")
@@ -150,7 +173,9 @@ extract_from_table_patid <- function(table_name, table_path, id_list, output_pat
   # Calculate and display execution time
   end_time <- Sys.time()
   elapsed_time <- difftime(end_time, start_time, units = "secs")
-  message(glue::glue("[{end_time}] Extraction completed in {round(elapsed_time/60, 2)} minutes."))
+  message(glue::glue(
+    "[{end_time}] Extraction completed in {round(elapsed_time/60, 2)} minutes."
+  ))
 }
 
 #' Helper function to process table path (handle wildcards)
@@ -163,7 +188,8 @@ process_table_path <- function(table_path) {
     file_pattern <- basename(table_path)
 
     # Get all matching files
-    files <- list.files(dir_path,
+    files <- list.files(
+      dir_path,
       pattern = gsub("\\*", ".*", file_pattern),
       full.names = TRUE
     )
@@ -189,9 +215,13 @@ process_table_path <- function(table_path) {
 #' @noRd
 get_read_function <- function(table_path) {
   # Extract file extension
-  if (grepl("\\*\\.(txt|csv)$", table_path) || grepl("\\.(txt|csv)$", table_path)) {
+  if (
+    grepl("\\*\\.(txt|csv)$", table_path) || grepl("\\.(txt|csv)$", table_path)
+  ) {
     return("read_csv_auto")
-  } else if (grepl("\\*\\.parquet$", table_path) || grepl("\\.parquet$", table_path)) {
+  } else if (
+    grepl("\\*\\.parquet$", table_path) || grepl("\\.parquet$", table_path)
+  ) {
     return("read_parquet")
   } else {
     stop(glue::glue("Unsupported file format in path: {table_path}"))
@@ -200,9 +230,9 @@ get_read_function <- function(table_path) {
 
 
 #' Helper functions for `extract_from_table`
-#' 
+#'
 #' @noRd
-process_value_list <- function(value_list, col_name = "pat_id") {
+process_value_list <- function(value_list, col_name = "patid") {
   # Convert to character vector if not already
   if (!is.character(value_list)) {
     value_list <- as.character(value_list)
@@ -213,7 +243,9 @@ process_value_list <- function(value_list, col_name = "pat_id") {
   value_dt <- unique(value_dt, by = "values")
   # Compare number of unique values with original list
   if (nrow(value_dt) < length(value_list)) {
-    warning(glue::glue("Number of unique values ({nrow(value_dt)}) is less than the length of the original list ({length(value_list)}). Duplicates have been removed."))
+    warning(glue::glue(
+      "Number of unique values ({nrow(value_dt)}) is less than the length of the original list ({length(value_list)}). Duplicates have been removed."
+    ))
   }
 
   return(value_dt)
@@ -225,7 +257,9 @@ check_schema <- function(table_name) {
   # Check if the specified table has a defined schema
   table_name_lower <- tolower(table_name)
   if (!table_name_lower %in% names(default_cprd_schemas)) {
-    warning(glue::glue("Schema not found for table '{table_name}'. Proceeding without type casting."))
+    warning(glue::glue(
+      "Schema not found for table '{table_name}'. Proceeding without type casting."
+    ))
     schema <- NULL
   } else {
     schema <- default_cprd_schemas[[table_name_lower]]
@@ -235,13 +269,21 @@ check_schema <- function(table_name) {
 
 #' Helper function to process select columns
 #' @noRd
-process_select_cols <- function(read_func, table_path, schema, select_cols, conn) {
+process_select_cols <- function(
+  read_func,
+  table_path,
+  schema,
+  select_cols,
+  conn
+) {
   # Get the column names from the database file
-  existing_cols_query <- glue::glue("
+  existing_cols_query <- glue::glue(
+    "
     SELECT *
     FROM {read_func}('{table_path}')
     LIMIT 0
-  ")
+  "
+  )
   db_col_names <- names(DBI::dbGetQuery(conn, existing_cols_query))
 
   # Check if the specified columns exist in the database file
@@ -250,7 +292,9 @@ process_select_cols <- function(read_func, table_path, schema, select_cols, conn
     if (!is.null(schema)) {
       # Schema is not null. Filter to only include columns that exist in the database file
       select_cols <- intersect(names(schema), db_col_names)
-      message(glue::glue("Select columns from schema that exist in database file: {paste(select_cols, collapse = ', ')}"))
+      message(glue::glue(
+        "Select columns from schema that exist in database file: {paste(select_cols, collapse = ', ')}"
+      ))
     } else {
       # Schema is null. Use all columns from the database file
       select_cols <- db_col_names
@@ -259,7 +303,9 @@ process_select_cols <- function(read_func, table_path, schema, select_cols, conn
     # Select columns was specified. Check for missing columns in the database file
     missing_cols <- setdiff(select_cols, db_col_names)
     if (length(missing_cols) > 0) {
-      stop(glue::glue("Column(s) not found in database file: {paste(missing_cols, collapse = ', ')}"))
+      stop(glue::glue(
+        "Column(s) not found in database file: {paste(missing_cols, collapse = ', ')}"
+      ))
     }
   }
 

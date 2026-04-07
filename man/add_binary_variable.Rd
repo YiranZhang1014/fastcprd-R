@@ -2,42 +2,10 @@
 % Please edit documentation in R/build_variable.R
 \name{add_binary_variable}
 \alias{add_binary_variable}
-\title{Add binary variable}
+\title{Add binary variable (based on continuous variable logic with optional last event date)}
 \usage{
-add_binary_variable(
-  data,
-  obs_path,
-  var_name,
-  med_code_list,
-  start_col,
-  start_offset_days = 0,
-  end_col,
-  end_offset_days = 0,
-  unique_col = "pregid"
-)
-}
-\arguments{
-\item{data}{Main data.table}
-
-\item{obs_path}{Path to observation data file}
-
-\item{var_name}{Name of the variable to add}
-
-\item{med_code_list}{List of medical codes to extract}
-
-\item{start_col}{Start date column name}
-
-\item{start_offset_days}{Days to offset start (default: 0)}
-
-\item{end_col}{End date column name}
-
-\item{end_offset_days}{Days to offset end (default: 0)}
-
-\item{unique_col}{Unique identifier column (default: "pregid")}
-}
-\value{
-data.table with added binary variable
+add_binary_variable(data, obs_path, med_code_list, hes_epi, icd_code_list, ...)
 }
 \description{
-Add binary variable
+Add binary variable (based on continuous variable logic with optional last event date)
 }
