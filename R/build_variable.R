@@ -540,6 +540,13 @@ add_continuous_variable <- function(
 
 #' Add previous condition indicator
 #' , to indicate whether a patient had the condition in the previous time period (e.g., gestational diabetes in the previous pregnancy)
+#' 
+#' @param data A data.table containing the patient data.
+#' @param outcome_col The name of the column representing the outcome of interest.
+#' @param new_col_name The name of the new column to be created. If NULL, a default name will be generated.
+#' @param time_col The name of the column representing the time variable (e.g., pregnancy start date).
+#' 
+#' @export
 add_previous_condition <- function(data, outcome_col, new_col_name = NULL, time_col = NULL) {
   # Copy the input data to avoid modifying the original data.table
   dt <- copy(data)

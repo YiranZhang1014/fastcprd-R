@@ -7,6 +7,15 @@
 \usage{
 add_previous_condition(data, outcome_col, new_col_name = NULL, time_col = NULL)
 }
+\arguments{
+\item{data}{A data.table containing the patient data.}
+
+\item{outcome_col}{The name of the column representing the outcome of interest.}
+
+\item{new_col_name}{The name of the new column to be created. If NULL, a default name will be generated.}
+
+\item{time_col}{The name of the column representing the time variable (e.g., pregnancy start date).}
+}
 \description{
 Add previous condition indicator
 , to indicate whether a patient had the condition in the previous time period (e.g., gestational diabetes in the previous pregnancy)
