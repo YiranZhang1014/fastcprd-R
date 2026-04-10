@@ -38,9 +38,6 @@ preprocess_events <- function(data, date_cols, val_col = "value") {
 #' @param time_col Time column for ordering (default: "pregstart")
 #' @return data.table with added previous outcome column
 #'
-#' @export
-#' Core internal function to add variables
-#'
 #' @noRd
 .add_variable_core <- function(
   data,
