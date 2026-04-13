@@ -557,10 +557,22 @@ add_previous_condition <- function(data, outcome_col, new_col_name = NULL, time_
   setorderv(dt, c("patid", time_col))
   
   # Calculate previous outcome
-  # Logic: Within each patid group, compute the cumulative maximum (cummax) and then shift down by one (shift)
+  # Replace NAs with 0 to prevent cummax from propagating NAs
   dt[, (new_col_name) := {
-    res <- cummax(get(outcome_col))
+    
+    # Fetch the outcome column
+    current_val <- get(outcome_col)
+    
+    # Safely replace NA with 0 for the calculation
+    # Coercing to numeric ensures type matching, avoiding fcoalesce type errors
+    safe_val <- fcoalesce(as.numeric(current_val), 0)
+    
+    # Calculate cumulative maximum on the NA-free vector
+    res <- cummax(safe_val)
+    
+    # Shift down by one to reflect 'previous' status
     shift(res, n = 1, fill = 0, type = "lag")
+    
   }, by = patid]
   
   return(dt)
